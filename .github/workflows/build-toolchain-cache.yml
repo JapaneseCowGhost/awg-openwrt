@@ -7,7 +7,7 @@ on:
         description: "OpenWrt version"
         type: string
         required: true
-        default: "SNAPSHOT"
+        default: "21.02-SNAPSHOT"
       openwrt_arch:
         description: "OpenWrt arch"
         type: string
@@ -22,34 +22,12 @@ on:
         description: "OpenWrt subtarget"
         type: string
         required: true
-        default: "filogic"
-      openwrt_vermagic:
-        description: "OpenWrt vermagic"
-        type: string
-        required: true
-        default: "any"
+        default: "mt7986"
 
 jobs:
   build:
-    name: "Build toolchain cache for OpenWrt: ${{ matrix.build_env.tag }} - ${{ matrix.build_env.pkgarch }} :: ${{ matrix.build_env.target }}/${{ matrix.build_env.subtarget }}"
-    #runs-on: ubuntu-22.04
-    runs-on: [self-hosted, linux]
-    strategy:
-      matrix:
-        build_env:
-          - tag: ${{ inputs.openwrt_version }}
-            pkgarch: ${{ inputs.openwrt_arch }}
-            target: ${{ inputs.openwrt_target }}
-            subtarget: ${{ inputs.openwrt_subtarget }}
-            vermagic: ${{ inputs.openwrt_vermagic }}
-
-    env:
-      OPENWRT_RELEASE: ${{ matrix.build_env.tag }}
-      OPENWRT_ARCH: ${{ matrix.build_env.pkgarch }}
-      OPENWRT_TARGET: ${{ matrix.build_env.target }}
-      OPENWRT_SUBTARGET: ${{ matrix.build_env.subtarget }}
-      OPENWRT_VERMAGIC: ${{ matrix.build_env.vermagic }}
-
+    name: "Build toolchain cache for OpenWrt: ${{ inputs.openwrt_version }} - ${{ inputs.openwrt_arch }} :: ${{ inputs.openwrt_target }}/${{ inputs.openwrt_subtarget }}"
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout amneziawg-openwrt
         uses: actions/checkout@v4
@@ -57,46 +35,34 @@ jobs:
           path: amneziawg-openwrt
           fetch-depth: 0
 
-      - name: Checkout OpenWrt snapshot repository
+      - name: Checkout OpenWrt repository
         uses: actions/checkout@v4
-        if: ${{ matrix.build_env.tag == 'SNAPSHOT' }}
         with:
           path: openwrt
           repository: openwrt/openwrt
-          fetch-depth: 0
-      
-      - name: Checkout OpenWrt regular repository
-        uses: actions/checkout@v4
-        if: ${{ matrix.build_env.tag != 'SNAPSHOT' }}
-        with:
-          path: openwrt
-          repository: openwrt/openwrt
-          ref: v${{ matrix.build_env.tag }}
+          ref: ${{ inputs.openwrt_version }}
           fetch-depth: 0
 
       - name: Build toolchain and kernel
         id: build-toolchain-kernel
         run: |
           set -x
-          cd amneziawg-openwrt
-          make show-env
-          time -p make build-toolchain
-          time -p make build-kernel
-          make purge-circular-symlinks
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          echo "CONFIG_TARGET_mediatek_mt7986=y" >> .config
+          echo "CONFIG_TARGET_mediatek_mt7986_DEVICE_glinet_gl-mt6000=y" >> .config
+          echo "CONFIG_ALL_KMODS=y" >> .config
+          echo "CONFIG_ALL_NONSHARED=y" >> .config
+          make defconfig
+          make -j$(nproc) toolchain/install
+          find bin/ -name "*.ipk" | head -20
 
-      - name: Save toolchain and kernel cache
-        id: cache-tools-kernel-save
-        uses: actions/cache/save@v4
+      - name: Upload toolchain cache
+        uses: actions/upload-artifact@v4
         with:
-          key: ${{ runner.os }}-openwrt-cache-toolchain-kernel-${{ matrix.build_env.tag }}-${{ matrix.build_env.pkgarch }}-${{ matrix.build_env.target }}-${{ matrix.build_env.subtarget }}
+          name: openwrt-toolchain-${{ inputs.openwrt_version }}-${{ inputs.openwrt_arch }}
           path: |
-            openwrt/.config
-            openwrt/.config.old
-            openwrt/feeds.conf
-            openwrt/bin/**
-            openwrt/build_dir/**
-            openwrt/dl/**
-            openwrt/feeds/**
-            openwrt/package/**
-            openwrt/staging_dir/**
-            openwrt/tmp/**
+            openwrt/bin/
+            openwrt/staging_dir/
+            openwrt/build_dir/
